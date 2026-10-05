@@ -19,13 +19,14 @@ namespace AlternativeEmeraldSea
         public const string Guid = "DogEggz.AlternativeEmeraldSea";
         // Keep the GUID/config path for upgrades from Alternative Emerald Sea.
         public const string Name = "Alternative Ocean Color";
-        public const string Version = "1.2.0";
+        public const string Version = "1.2.1";
 
         internal static Plugin Instance { get; private set; }
         private ConfigEntry<bool> presetEnabled;
         private ConfigEntry<bool> caribbeanTurquoise;
         private ConfigEntry<bool> emeraldSea;
         private ConfigEntry<bool> winterAestrin, openChronosOcean;
+        private ConfigEntry<bool> caribbeanTwilight, emeraldTwilight, winterTwilight, chronosTwilight;
         private ConfigEntry<OceanRegion> winterRegion, chronosRegion;
         private bool changingSelection;
         private Harmony harmony;
@@ -55,18 +56,22 @@ namespace AlternativeEmeraldSea
                 "Apply selected regional clear-day and saved clear dawn/dusk palettes. Cloudy/rain/storm and night retain their original contributions. Disable Ocean Color Configurator overrides when using this mod.");
             bool saveOnSet = Config.SaveOnConfigSet;
             Config.SaveOnConfigSet = false;
-            caribbeanTurquoise = BindEmerald("Caribbean Turquoise", true,
+            caribbeanTurquoise = BindEmerald("Caribbean Turquoise", true, 4,
                 "Use the saved turquoise water, green surface, reflections, and atmosphere settings. Selecting this turns Emerald Sea off. Both preset toggles off uses the game palette. Tuned at Gamma 1.0.");
-            emeraldSea = BindEmerald("Emerald Sea", false,
+            caribbeanTwilight = BindTwilight("Emerald Archipelagos", "Caribbean Turquoise", 3);
+            emeraldSea = BindEmerald("Emerald Sea", false, 2,
                 "Use the saved darker emerald water and reflections, with Temperature 15. Selecting this turns Caribbean Turquoise off. Both preset toggles off uses the game palette.");
+            emeraldTwilight = BindTwilight("Emerald Archipelagos", "Emerald Sea", 1);
             winterAestrin = Config.Bind("Aestrin", "Winter Aestrin", false,
-                Description("Enable Winter Aestrin in the region(s) selected below. Temperature -10, clear-day specular 0.35.", 4));
+                Description("Enable Winter Aestrin in the region(s) selected below. Temperature -10, clear-day specular 0.35.", 6));
             winterRegion = Config.Bind("Aestrin", "Winter Aestrin - Apply to", OceanRegion.Aestrin,
-                Description("Choose Aestrin, Chronos, or Both. The most recently enabled or reassigned preset takes overlapping regions; the other keeps any remaining region or turns off.", 3));
+                Description("Choose Aestrin, Chronos, or Both. The most recently enabled or reassigned preset takes overlapping regions; the other keeps any remaining region or turns off.", 5));
+            winterTwilight = BindTwilight("Aestrin", "Winter Aestrin", 4);
             openChronosOcean = Config.Bind("Aestrin", "Open Chronos Ocean", true,
-                Description("Enable the saved deep blue clear-day and clear dawn/dusk palette in the region(s) selected below.", 2));
+                Description("Enable the saved deep blue clear-day and clear dawn/dusk palette in the region(s) selected below.", 3));
             chronosRegion = Config.Bind("Aestrin", "Open Chronos Ocean - Apply to", OceanRegion.Chronos,
-                Description("Choose Aestrin, Chronos, or Both. The most recently enabled or reassigned preset takes overlapping regions; the other keeps any remaining region or turns off.", 1));
+                Description("Choose Aestrin, Chronos, or Both. The most recently enabled or reassigned preset takes overlapping regions; the other keeps any remaining region or turns off.", 2));
+            chronosTwilight = BindTwilight("Aestrin", "Open Chronos Ocean", 1);
             if (!Enum.IsDefined(typeof(OceanRegion), winterRegion.Value)) winterRegion.Value = OceanRegion.Aestrin;
             if (!Enum.IsDefined(typeof(OceanRegion), chronosRegion.Value)) chronosRegion.Value = OceanRegion.Chronos;
             // A hand-edited conflicting config has no last action: Chronos wins.
@@ -80,6 +85,10 @@ namespace AlternativeEmeraldSea
             openChronosOcean.SettingChanged += SettingsChanged;
             winterRegion.SettingChanged += SettingsChanged;
             chronosRegion.SettingChanged += SettingsChanged;
+            caribbeanTwilight.SettingChanged += SettingsChanged;
+            emeraldTwilight.SettingChanged += SettingsChanged;
+            winterTwilight.SettingChanged += SettingsChanged;
+            chronosTwilight.SettingChanged += SettingsChanged;
             Config.SaveOnConfigSet = saveOnSet;
             Config.Save();
             PaletteRegistry.Clear();
@@ -91,12 +100,16 @@ namespace AlternativeEmeraldSea
         private static ConfigDescription Description(string text, int order) =>
             new ConfigDescription(text, null, new SettingOrder { Order = order });
 
-        private ConfigEntry<bool> BindEmerald(string key, bool fallback, string description)
+        private ConfigEntry<bool> BindTwilight(string section, string preset, int order) =>
+            Config.Bind(section, preset + " - Use Custom Dusk/Dawn Colors", true,
+                Description("Use this preset's custom ocean colors at clear dawn and dusk. Disable to use Sailwind's vanilla twilight colors while retaining the preset's clear-day colors. Follows this preset's selected region(s).", order));
+
+        private ConfigEntry<bool> BindEmerald(string key, bool fallback, int order, string description)
         {
             // Consume the legacy entry, using it only when the new category has
             // no saved value. Remove the old entry so it does not appear in UI.
             var old = Config.Bind("Presets", key, fallback);
-            var entry = Config.Bind("Emerald Archipelagos", key, old.Value, description);
+            var entry = Config.Bind("Emerald Archipelagos", key, old.Value, Description(description, order));
             Config.Remove(old.Definition);
             return entry;
         }
@@ -136,9 +149,21 @@ namespace AlternativeEmeraldSea
             if (!Active) return;
             // The game has already blended regions, weather, dawn, and night.
             // Replace only each selected clear endpoint's weighted contribution.
-            source.Emerald.Apply(ref palette, SelectedPreset, dayWeight, twilight);
-            source.Aestrin.Apply(ref palette, AestrinPreset, dayWeight, twilight);
-            source.Chronos.Apply(ref palette, ChronosPreset, dayWeight, twilight);
+            var emerald = SelectedPreset;
+            var aestrin = AestrinPreset;
+            var chronos = ChronosPreset;
+            source.Emerald.Apply(ref palette, emerald, dayWeight, CustomTwilightEnabled(emerald) ? twilight : 0f);
+            source.Aestrin.Apply(ref palette, aestrin, dayWeight, CustomTwilightEnabled(aestrin) ? twilight : 0f);
+            source.Chronos.Apply(ref palette, chronos, dayWeight, CustomTwilightEnabled(chronos) ? twilight : 0f);
+        }
+
+        private bool CustomTwilightEnabled(SeaPreset preset)
+        {
+            if (preset == SeaPreset.CaribbeanTurquoise) return caribbeanTwilight.Value;
+            if (preset == SeaPreset.EmeraldSea) return emeraldTwilight.Value;
+            if (preset == SeaPreset.WinterAestrin) return winterTwilight.Value;
+            if (preset == SeaPreset.OpenChronosOcean) return chronosTwilight.Value;
+            return false;
         }
 
         private MaterialOverrides GetMaterialOverrides()
@@ -167,6 +192,10 @@ namespace AlternativeEmeraldSea
             if (openChronosOcean != null) openChronosOcean.SettingChanged -= SettingsChanged;
             if (winterRegion != null) winterRegion.SettingChanged -= SettingsChanged;
             if (chronosRegion != null) chronosRegion.SettingChanged -= SettingsChanged;
+            if (caribbeanTwilight != null) caribbeanTwilight.SettingChanged -= SettingsChanged;
+            if (emeraldTwilight != null) emeraldTwilight.SettingChanged -= SettingsChanged;
+            if (winterTwilight != null) winterTwilight.SettingChanged -= SettingsChanged;
+            if (chronosTwilight != null) chronosTwilight.SettingChanged -= SettingsChanged;
             material.Restore();
             harmony?.UnpatchSelf();
             PaletteRegistry.Clear();
@@ -289,11 +318,12 @@ namespace AlternativeEmeraldSea
             tint: 0f, specular: 0.4f, atmosphere: 0.8f, exposure: 1.6f, sunScattering: 0f,
             dawnWater: Rgb(40, 126, 136), dawnSurface: Rgb(107, 151, 153), dawnScattering: Rgb(63, 145, 149));
 
-        // Saved Winter snapshot has no enabled dawn profile.
+        // Winter's muted slate-blue twilight palette was approved for 1.2.1.
         internal static readonly SeaPreset WinterAestrin = new SeaPreset(
             Rgb(36, 85, 138), Rgb(66, 108, 149), -10f, 0.35f,
             scattering: Rgb(52, 114, 166), shallow: Rgb(79, 135, 184),
-            towardSun: Rgb(187, 205, 229), awayFromSun: Rgb(69, 94, 136), tint: 0f, specular: 0.35f);
+            towardSun: Rgb(187, 205, 229), awayFromSun: Rgb(69, 94, 136), tint: 0f, specular: 0.35f,
+            dawnWater: Rgb(56, 95, 131), dawnSurface: Rgb(113, 134, 158), dawnScattering: Rgb(79, 126, 159));
 
         internal static readonly SeaPreset OpenChronosOcean = new SeaPreset(
             Rgb(16, 51, 104), Rgb(36, 74, 118), 0f, 0.25f,
